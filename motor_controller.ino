@@ -1,87 +1,103 @@
+double input = 0.0;    //current speed    
+double output = 0.0;   //Pwm value
 double target;
-double speed;
+
+bool debug = false;
 const int pwmPin = 2;
 const int brakePin = 5;  
+const int remotePin = 4;
+const int hallPin1 = 6;     // Hall sensor 1
+const int hallPin2 = 7;     // Hall sensor 2
+const int hallPin3 = 8;     // Hall sensor 3
+
+volatile int pulseCount = 0;
+unsigned long lastPulseTime = 0;
+
+
+
+
+//-----PID vars----
+
+const double Kp = 2.0;  
+const double Ki = 1.0;  
+const double Kd = 0.5; 
+
+double error = 0.0;
+double previous_error = 0.0;
+double integral = 0.0;
+double derivative = 0.0;
+
+//time vars
+unsigned long lastTime;
+double sampleTime = 100.0; // Sample time in milliseconds
+
+
+
+void countPulse() {
+  pulseCount++;
+  lastPulseTime = millis();
+}
 
 void setup() {
-pinMode(4, INPUT);
+Serial.begin(115200);
+pinMode(remotePin, INPUT);
 pinMode(pwmPin, OUTPUT);
 pinMode(brakePin, OUTPUT);
-Serial.begin(115200);
+pinMode(hallPin1, INPUT_PULLUP);
+pinMode(hallPin2, INPUT_PULLUP);
+pinMode(hallPin3, INPUT_PULLUP);
+
+  // Attach interrupts to hall sensors
+attachInterrupt(digitalPinToInterrupt(hallPin2), countPulse, RISING);
+attachInterrupt(digitalPinToInterrupt(hallPin3), countPulse, RISING);
+attachInterrupt(digitalPinToInterrupt(hallPin1), countPulse, RISING);
+
+lastTime = millis();
+
 }
 
 void loop() {
-target = pulseIn(4, HIGH) -1458.00;
-Serial.print("Zero:");
-Serial.println(0);
 
-if(target <= 10.0 && target >= -100.0){
-  Serial.println("idle");
+unsigned long currentTime = millis();
+double elapsedTime = (double)(currentTime - lastTime);
+
+
+if (elapsedTime >= sampleTime) {
+  noInterrupts();
+  int pulses = pulseCount;
+  pulseCount = 0;
+  interrupts();
+
+  double revolutions = pulses / 6.0;
+  double rpm = (revolutions / (elapsedTime / 60000.0)); // revolutions per minute
+  input = rpm;
   
-  speed = speed-5;
-  if (speed<0){
-    speed=0;
-  }
-  
-  analogWrite(pwmPin,speed);
-  
-  digitalWrite(brakePin, LOW);  
+  target = pulseIn(4, HIGH) -1458.00; //radio receiver pin input
 
-  Serial.print("Target:");
-  Serial.println(target);
-  Serial.print("Speed:");
-  Serial.println(speed);
-  Serial.print("Max:");
-  Serial.println(255);
-  
-}
-else if (target < -10.0){
-  Serial.println("brake");
-  if(speed > 70){
-    speed = speed-5;
-  }
-  else{
-  speed=0;
-  analogWrite(pwmPin,speed);
-  digitalWrite(brakePin, HIGH);
-  }
-  
+  error = target - input;
+  integral += error * (elapsedTime / 1000.0);
+  derivative = (error - previous_error) / (elapsedTime / 1000.0);
 
-  Serial.print("Target:");
-  Serial.println(target);
-  Serial.print("Speed:");
-  Serial.println(speed);
-  Serial.print("Max:");
-  Serial.println(255);
-  
-  //activate braking pin
-}
 
-else if (target > 10.0){
-  digitalWrite(brakePin, LOW);  
+  output = Kp * error + Ki * integral + Kd * derivative;
+  output = constrain(output, 0, 255); // PWM range
 
-  
-  target = (target*2)/5;
-  Serial.print("Target:");
-  Serial.println(target);
-  Serial.print("Max:");
-  Serial.println(255);
+  analogWrite(pwmPin, (int)output);
 
-  double diff = abs(target-speed);
 
-  
-  if(target > speed){
-      speed = speed+(diff/30);
-      Serial.print("Speed:");
-      Serial.println(round(speed));
-  } 
-  else if (target < speed){
-      speed = speed-(diff/30);
-      Serial.print("Speed:");
-      Serial.println(round(speed));
+    if(debug){
+    Serial.print("Target: ");
+    Serial.print(target);
+    Serial.print(" RPM | Input: ");
+    Serial.print(input);
+    Serial.print(" RPM | Output (PWM): ");
+    Serial.println((int)output);
+    }
+    
 
-  }
+    previous_error = error;
 
+    lastTime = currentTime;
 
 }
 delay(10);
